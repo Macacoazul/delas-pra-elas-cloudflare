@@ -1,0 +1,18 @@
+# Só para quem publica pelo terminal (npx wrangler deploy) e para o teste local (npm run dev).
+# Quem cola os arquivos no editor do painel do Cloudflare não usa este arquivo.
+# Antes: npm run colar  (gera a pasta para-colar/ a partir de src/, app/ e site/)
+name = "delas-pra-elas"
+main = "para-colar/worker.js"
+compatibility_date = "2025-06-01"
+
+# O banco de dados D1 (o nome DB é o que o código espera).
+# Para publicar pelo terminal: npx wrangler d1 create delas-pra-elas  -> copie o database_id que ele mostrar para cá.
+# No teste local (npm run dev) este número não é usado: o wrangler cria um banco de brinquedo na sua máquina.
+[[d1_databases]]
+binding = "DB"
+database_name = " delas-pra-elas"
+database_id = "154fc2b0-6fe2-4b7b-856d-2a6ecb0c017c"
+
+# Rotina: a cada 30 minutos confere Pix pendentes e atualiza o rastreio.
+[triggers]
+crons = ["*/30 * * * *"]

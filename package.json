@@ -1,0 +1,33 @@
+{
+  "name": "delas-pra-elas",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Delas pra Elas: o app da live e os fretes num Worker só do Cloudflare (banco D1), em JavaScript puro, com arquivos legíveis para colar no painel.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "site": "node scripts/construir-site.mjs",
+    "colar": "node scripts/colar.mjs",
+    "test": "node --test \"test/*.test.js\"",
+    "test:d1": "cross-env TESTE_DB=d1 node --test \"test/*.test.js\"",
+    "test:workerd": "node --test --test-concurrency=1 \"test/workerd/*.test.mjs\"",
+    "test:e2e": "node test/e2e/e2e.js",
+    "dev": "npm run colar && wrangler dev",
+    "lint": "eslint .",
+    "pretest:workerd": "npm run colar",
+    "verificar": "npm run lint && npm test && npm run test:d1 && npm run test:e2e && npm run test:workerd"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "acorn": "^8.19.0",
+    "cross-env": "^7.0.3",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
+    "preact": "10.29.8",
+    "prettier": "3.6.2",
+    "wrangler": "^4.0.0"
+  }
+}

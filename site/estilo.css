@@ -1,0 +1,17 @@
+/* Regras básicas das telas do app e da tela de Fretes (as cores e o resto do visual ficam dentro das próprias telas). */
+html, body { margin: 0; padding: 0; background: #FAF5F3; }
+#app { min-height: 100vh; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; font-family: inherit; }
+input, textarea, select { font-family: inherit; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid #BE1450; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* "Abrindo…" enquanto o JavaScript carrega */
+.abrindo { margin: 0; padding: 40px 24px; text-align: center; color: #7A6874; font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+/* página "não encontrada" */
+.erro-pagina { min-height: 100vh; display: flex; align-items: center; justify-content: center; color: #2B1C28; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.erro-pagina main { max-width: 360px; padding: 24px; text-align: center; }
+.erro-pagina h1 { font-family: Georgia, serif; font-weight: 400; font-size: 24px; margin: 0 0 8px; }
+.erro-pagina p { color: #7A6874; line-height: 1.5; margin: 0; }
