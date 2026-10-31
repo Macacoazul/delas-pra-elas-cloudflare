@@ -10,7 +10,7 @@ compatibility_date = "2025-06-01"
 # No teste local (npm run dev) este número não é usado: o wrangler cria um banco de brinquedo na sua máquina.
 [[d1_databases]]
 binding = "DB"
-database_name = " delas-pra-elas"
+database_name = "delas-pra-elas"
 database_id = "154fc2b0-6fe2-4b7b-856d-2a6ecb0c017c"
 
 # Rotina: a cada 30 minutos confere Pix pendentes e atualiza o rastreio.

@@ -74,6 +74,18 @@ Tudo em **Fretes** (aba, só para a dona):
 
 Quando receber arquivos novos, cole só os que mudaram (mesmo nome) e clique em **Deploy**. Os dados no D1 não são mexidos.
 
+## Caminho mais seguro: publicar pelo GitHub (sem colar arquivos)
+
+O editor do painel pode falhar com tantos arquivos (erro `No such module`). Pelo GitHub o Cloudflare lê a pasta inteira do repositório e publica sozinho a cada alteração. O `wrangler.toml` já liga o banco `DB`, o cron e o `main`.
+
+1. Cloudflare → **Workers & Pages → Create → Import a repository** (ou *Connect to Git*) → autorize o GitHub → escolha este repositório.
+2. Nome do Worker: **`delas-pra-elas`** (precisa ser igual ao `name` do `wrangler.toml`). Deixe *Build command* vazio e *Deploy command* `npx wrangler deploy`. Clique em **Save and Deploy**.
+3. Worker → **Settings → Variables and Secrets** → tipo **Secret**: `SEGREDO` (mínimo 20 caracteres) e `ADMIN_SENHA`. Depois, **Deploy** de novo, para o Worker ler os segredos.
+4. Para usar o seu domínio: **Settings → Domains & Routes → Add → Custom domain** (ex.: `brecho.favo.net.br`).
+5. Confira `https://SEU-ENDERECO/api/saude` (quatro `true`) e faça o **Primeiro acesso** (passo 6 acima).
+
+O `database_id` do `wrangler.toml` é o do banco `delas-pra-elas` da conta. Se criar outro banco, troque o número e envie para o GitHub.
+
 ## Plano B: pelo terminal
 
 Com Node instalado: `npm install`, `npx wrangler login`, `npx wrangler d1 create delas-pra-elas` (copie o `database_id` para o `wrangler.toml`), `npx wrangler secret put SEGREDO`, `npx wrangler secret put ADMIN_SENHA`, `npx wrangler deploy`.
