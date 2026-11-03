@@ -25,6 +25,8 @@ class Mocks {
     this.saldo = 1000000; // centavos
     this.orders = new Map();
     this.pagamentos = new Map();
+    this.preferencias = new Map();
+    this.proximaPreferencia = 1;
     this.idempotencia = new Map();
     this.proximoPagamento = 90000001;
     this.chamadas = [];
@@ -69,6 +71,29 @@ class Mocks {
 
   estornar(idPagamento) {
     this.pagamentos.get(String(idPagamento)).status = 'refunded';
+  }
+
+  ultimaPreferencia() {
+    return [...this.preferencias.values()].pop();
+  }
+
+  /** Simula a cliente pagando na página do Mercado Pago (cartão, débito ou Pix). Devolve o pagamento criado. */
+  pagarNaPagina(preferencia, { status = 'approved', metodo = 'visa', tipo = 'credit_card', parcelas = 1, valorCentavos = null } = {}) {
+    const total = preferencia.items.reduce((t, i) => t + Math.round(i.unit_price * 100) * i.quantity, 0);
+    const id = String(this.proximoPagamento);
+    this.proximoPagamento += 1;
+    const pag = {
+      id: Number(id),
+      status,
+      status_detail: status === 'approved' ? 'accredited' : 'cc_rejected_other_reason',
+      transaction_amount: (valorCentavos === null ? total : valorCentavos) / 100,
+      installments: parcelas,
+      payment_method_id: metodo,
+      payment_type_id: tipo,
+      external_reference: preferencia.external_reference,
+    };
+    this.pagamentos.set(id, pag);
+    return pag;
   }
 
   ultimoPagamento() {
@@ -401,6 +426,35 @@ class Mocks {
       this.pagamentos.set(id, pag);
       this.idempotencia.set(chave, pag);
       return responder(201, pag);
+    }
+
+    if (req.method === 'POST' && caminho === '/checkout/preferences') {
+      if (this._falhar('preferencia')) return responder(500, { message: 'internal_error' });
+      const b = corpo || {};
+      const erros = [];
+      if (!Array.isArray(b.items) || !b.items.length) erros.push('items obrigatório');
+      else if (!b.items.every((i) => i.currency_id === 'BRL' && i.quantity === 1 && typeof i.unit_price === 'number' && i.unit_price > 0 && typeof i.title === 'string' && i.title)) erros.push('item inválido');
+      if (!/^DPE-[A-Za-z0-9]{20}$/.test(String(b.external_reference))) erros.push('external_reference inesperada');
+      const ex = ((b.payment_methods || {}).excluded_payment_types || []).map((x) => x.id).sort().join(',');
+      if (ex !== 'atm,ticket') erros.push('boleto e lotérica deveriam estar excluídos');
+      const parc = (b.payment_methods || {}).installments;
+      if (!(Number.isInteger(parc) && parc >= 1 && parc <= 12)) erros.push('installments inválido');
+      if (!b.payer || !/^[^\s@]+@[^\s@]+$/.test(String(b.payer.email))) erros.push('payer.email inválido');
+      if (b.payer && b.payer.identification) erros.push('o CPF não deve ir na preferência');
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/.test(String(b.expiration_date_to))) erros.push('expiration_date_to em formato inválido');
+      if (b.back_urls && !(b.auto_return === 'approved' && String(b.back_urls.success).startsWith('https://'))) erros.push('back_urls/auto_return inconsistentes');
+      if (erros.length) return responder(400, { message: erros.join('; '), error: 'bad_request', status: 400 });
+      const id = `PREF-${this.proximaPreferencia}`;
+      this.proximaPreferencia += 1;
+      const pref = { ...b, id, init_point: `https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=${id}` };
+      this.preferencias.set(id, pref);
+      return responder(201, pref);
+    }
+
+    if (req.method === 'GET' && caminho === '/v1/payments/search') {
+      if (this._falhar('consulta')) return responder(503, { message: 'indisponível' });
+      const ref = new URL(req.url, this.base).searchParams.get('external_reference');
+      return responder(200, { results: [...this.pagamentos.values()].filter((p) => p.external_reference === ref).reverse() });
     }
 
     const m = caminho.match(/^\/v1\/payments\/(\d+)$/);

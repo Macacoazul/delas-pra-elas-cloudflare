@@ -197,6 +197,11 @@ class Tx {
     return ref.get();
   }
 
+  async getAll(refs) {
+    if (this.escritas.length) throw new Error('Banco: leituras devem vir antes das escritas na transação');
+    return Promise.all(refs.map((r) => r.get()));
+  }
+
   set(ref, dados, opcoes = {}) {
     validar(dados, ref.path);
     this.escritas.push(() => ref._set(dados, opcoes));

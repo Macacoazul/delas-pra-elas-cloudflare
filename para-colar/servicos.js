@@ -551,6 +551,58 @@ async function criarPix(ctx, creds, p) {
   return { ok: true, pagamento };
 }
 
+/** O endereço de pagamento só serve se for https e do próprio Mercado Pago (a cliente será levada para lá). */
+function enderecoDoCheckout(url) {
+  try {
+    const u = new URL(String(url || ''));
+    return u.protocol === 'https:' && /(^|\.)mercadopago\.(com|com\.br|com\.ar|com\.mx|com\.co|com\.pe|com\.uy|com\.ve|cl)$/.test(u.hostname) ? u.href : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Página de pagamento hospedada pelo Mercado Pago (Checkout Pro): a cliente escolhe Pix, cartão de crédito
+ * (à vista ou parcelado) ou cartão de débito. Nenhum dado de cartão passa por este site.
+ * Boleto e lotérica ficam de fora (demoram dias e a loja precisa do pagamento confirmado para postar).
+ * `parcelasMax` é o limite que a página oferece; "sem juros" é configurado na conta do Mercado Pago, não aqui.
+ * @param {{itens:{id:string,titulo:string,valorCentavos:number}[],referencia:string,email:string,nome:string,sobrenome:string,parcelasMax:number,expiraEmMs:number,notificationUrl?:string,retornoUrl?:string}} p
+ */
+async function criarPreferencia(ctx, creds, p) {
+  if (!creds || !creds.accessToken) return { ok: false, retentavel: false, erro: 'O Access Token do Mercado Pago ainda não foi salvo (tela Fretes → Ajustes).' };
+  const corpo = {
+    items: p.itens.map((i) => ({ id: i.id, title: texto(i.titulo, 120), quantity: 1, currency_id: 'BRL', unit_price: deCentavos(i.valorCentavos) })),
+    payer: { email: p.email, name: texto(p.nome, 60), surname: texto(p.sobrenome, 60) },
+    external_reference: p.referencia,
+    statement_descriptor: 'DELAS PRA ELAS',
+    payment_methods: { excluded_payment_types: [{ id: 'ticket' }, { id: 'atm' }], installments: Math.max(1, Math.min(12, Math.floor(p.parcelasMax) || 1)) },
+    expires: true,
+    expiration_date_from: formatarExpiracao(ctx.now()),
+    expiration_date_to: formatarExpiracao(p.expiraEmMs),
+  };
+  if (p.notificationUrl && p.notificationUrl.startsWith('https://')) corpo.notification_url = p.notificationUrl;
+  if (p.retornoUrl && p.retornoUrl.startsWith('https://')) {
+    corpo.back_urls = { success: p.retornoUrl, pending: p.retornoUrl, failure: p.retornoUrl };
+    corpo.auto_return = 'approved';
+  }
+  const r = await requisitar(ctx, 'mercadopago', 'POST', `${baseUrl(ctx)}/checkout/preferences`, { headers: auth(creds), json: corpo, timeoutMs: 25000 });
+  if (!r.ok) return { ok: false, retentavel: r.rede || r.status >= 500, erro: traduzirErro(r, 'O Mercado Pago recusou a criação do pagamento.') };
+  const b = r.body || {};
+  const url = enderecoDoCheckout(b.init_point);
+  if (!url || typeof b.id !== 'string' || !b.id) return { ok: false, retentavel: true, erro: 'O Mercado Pago não devolveu a página de pagamento. Tente novamente.' };
+  return { ok: true, preferencia: { id: b.id.slice(0, 80), url } };
+}
+
+/** Pagamentos feitos na página de pagamento desta referência (os mais novos primeiro). */
+async function buscarPorReferencia(ctx, creds, referencia) {
+  if (!creds || !creds.accessToken || !/^DPE-[A-Za-z0-9]{20}$/.test(String(referencia))) return { ok: false, retentavel: false, erro: 'Referência ou credencial inválidas.' };
+  const url = `${baseUrl(ctx)}/v1/payments/search?external_reference=${encodeURIComponent(referencia)}&sort=date_created&criteria=desc&limit=10`;
+  const r = await requisitar(ctx, 'mercadopago', 'GET', url, { headers: auth(creds), timeoutMs: 20000 });
+  if (!r.ok) return { ok: false, retentavel: r.rede || r.status >= 500 || r.status === 429, erro: traduzirErro(r) };
+  const lista = r.body && Array.isArray(r.body.results) ? r.body.results : [];
+  return { ok: true, pagamentos: lista.map(interpretarPagamento).filter(Boolean) };
+}
+
 async function consultarPagamento(ctx, creds, id) {
   if (!creds || !creds.accessToken || !/^\d{1,20}$/.test(String(id))) return { ok: false, retentavel: false, erro: 'Pagamento ou credencial inválidos.' };
   const r = await requisitar(ctx, 'mercadopago', 'GET', `${baseUrl(ctx)}/v1/payments/${id}`, { headers: auth(creds), timeoutMs: 20000 });
@@ -680,7 +732,7 @@ async function verificarAssinatura(xSignature, xRequestId, dataId, segredo) {
   return hmacSha256Confere(segredo, manifesto, assinatura.v1);
 }
 
-return { baseUrl, traduzirErro, formatarExpiracao, criarPix, consultarPagamento, cancelarPagamento, testar, interpretarPagamento, mapearStatus, sanitizarImagemQr, mimeDaImagem, verificarAssinatura, temFormatoDeAssinatura };
+return { baseUrl, traduzirErro, formatarExpiracao, criarPix, criarPreferencia, buscarPorReferencia, enderecoDoCheckout, consultarPagamento, cancelarPagamento, testar, interpretarPagamento, mapearStatus, sanitizarImagemQr, mimeDaImagem, verificarAssinatura, temFormatoDeAssinatura };
 })();
 
 /* ────────────────────────────────────────────────────────────────────────────────────────────────────

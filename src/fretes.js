@@ -18,6 +18,7 @@ import { ErroNegocio, numeroEntre, lerConfig, lerCredenciais, refFrete, refPriv,
 const ANTES_DO_PAGAMENTO = ['criado', 'aguardando_pagamento'];
 const JA_PAGOS = ['pago', 'etiqueta', 'postado', 'entregue'];
 const REF_PIX = /^DPE-([A-Za-z0-9]{20})$/;
+const MAX_PECAS = 30;
 
 /* ------------------------------------------------------------------ Criar */
 
@@ -25,6 +26,27 @@ const REF_PIX = /^DPE-([A-Za-z0-9]{20})$/;
  * @param {{email:string}} admin
  * @param {{clienteId?:string,clienteNome:string,whatsapp?:string,caixaId:string,pesoKg:number|string,valorDeclarado?:number|string,conteudo?:string,observacao?:string}} e
  */
+/**
+ * Peças da cliente que entram no mesmo pagamento do frete. O servidor lê as vendas do banco (nunca confia em valor vindo da tela):
+ * cada peça precisa ser da cliente e ainda não estar paga.
+ * @returns {Promise<{id:string,nome:string,centavos:number}[]>}
+ */
+async function resolverPecas(ctx, clienteId, vendaIds) {
+  if (vendaIds === undefined || vendaIds === null || (Array.isArray(vendaIds) && !vendaIds.length)) return [];
+  if (!Array.isArray(vendaIds) || vendaIds.length > MAX_PECAS) throw new ErroNegocio('pecas_invalidas', `Escolha até ${MAX_PECAS} peças.`);
+  const ids = [...new Set(vendaIds)];
+  if (!ids.every((v) => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v))) throw new ErroNegocio('pecas_invalidas', 'Peças inválidas.');
+  if (!clienteId) throw new ErroNegocio('sem_cliente', 'Para incluir peças, escolha a cliente na lista (ela precisa estar cadastrada).');
+  const q = await ctx.db.collection('vendas').where('clienteId', '==', clienteId).get();
+  const porId = new Map(q.docs.map((d) => [d.id, d.data()]));
+  return ids.map((id) => {
+    const v = porId.get(id);
+    const centavos = v ? Math.round(Number(v.valor) * 100) : 0;
+    if (!v || v.pago === true || !(centavos > 0)) throw new ErroNegocio('peca_invalida', 'Uma das peças não é desta cliente, já está paga ou está sem valor. Atualize a lista e tente de novo.');
+    return { id, nome: U.texto(v.peca, 80) || 'Peça', centavos };
+  });
+}
+
 async function criarFrete(ctx, admin, e) {
   const cfg = await lerConfig(ctx);
   if (!cfg.origemCep) throw new ErroNegocio('sem_origem', 'Antes de criar links, informe o CEP de origem em Fretes → Ajustes.');
@@ -44,16 +66,24 @@ async function criarFrete(ctx, admin, e) {
   }
   declaradoCentavos = Math.round(declaradoCentavos);
 
+  const clienteId = U.texto(e.clienteId, 40);
+  const pecas = await resolverPecas(ctx, clienteId, e.vendaIds);
+  const pecasCentavos = pecas.reduce((t, p) => t + p.centavos, 0);
+
   const id = ctx.db.collection('fretes').doc().id;
   const agora = ctx.now();
   const token = Cripto.novoToken();
   const frete = {
+    // Com peças no mesmo pagamento, só a página de pagamento do Mercado Pago atende (Pix, crédito e débito).
+    forma: pecas.length ? 'checkout' : cfg.formaPagamento,
+    pecas,
+    pecasCentavos,
     token,
     status: 'criado',
     criadoEm: agora,
     atualizadoEm: agora,
     criadoPor: U.texto(admin && admin.email, 120),
-    clienteId: U.texto(e.clienteId, 40),
+    clienteId,
     clienteNome,
     whatsapp: U.digitos(e.whatsapp).slice(0, 15),
     caixa: { id: caixa.id, nome: caixa.nome, altura: caixa.altura, largura: caixa.largura, comprimento: caixa.comprimento },
@@ -91,13 +121,19 @@ function urlRastreio(codigo) {
 function visaoPublica(ctx, frete, priv) {
   const agora = ctx.now();
   const pag = frete.pagamento || null;
-  const pixAtivo = !!(pag && pag.status === 'pending' && pag.expiraEm > agora && priv && priv.pix && priv.pix.qrCode);
+  const ativo = !!(pag && pag.status === 'pending' && pag.expiraEm > agora);
+  const pixAtivo = ativo && pag.tipo !== 'checkout' && !!(priv && priv.pix && priv.pix.qrCode);
+  const checkoutAtivo = ativo && pag.tipo === 'checkout' && !!(priv && priv.checkout && priv.checkout.url);
+  const pecas = Array.isArray(frete.pecas) ? frete.pecas : [];
   const rastreio = frete.rastreio || null;
   return {
     loja: 'Delas pra Elas',
     nome: U.texto(frete.clienteNome, 80).split(' ')[0] || '',
     status: frete.status,
     pacote: frete.caixa ? { altura: frete.caixa.altura, largura: frete.caixa.largura, comprimento: frete.caixa.comprimento, pesoKg: frete.pesoKg } : null,
+    pecas: pecas.map((p) => ({ nome: p.nome, valorCentavos: p.centavos })),
+    pecasCentavos: frete.pecasCentavos || 0,
+    forma: frete.forma === 'checkout' ? 'checkout' : 'pix',
     cep: frete.cep || '',
     cidade: frete.cidade || '',
     uf: frete.uf || '',
@@ -107,6 +143,7 @@ function visaoPublica(ctx, frete, priv) {
     pagamento: pag
       ? { status: pag.status, valorCentavos: pag.valorCentavos, expiraEm: pag.expiraEm || 0, pagoEm: pag.pagoEm || 0 }
       : null,
+    checkout: checkoutAtivo ? { url: priv.checkout.url, valorCentavos: pag.valorCentavos, parcelasMax: pag.parcelasMax || 1, expiraEm: pag.expiraEm } : null,
     pix: pixAtivo
       ? {
           copiaECola: priv.pix.qrCode,
@@ -303,26 +340,36 @@ async function pagar(ctx, token, entrada) {
     const dest = validarDestinatario(entrada || {}, cot);
 
     const pag = f.pagamento;
-    if (pag && pag.status === 'pending' && pag.expiraEm > agora && f.servico && f.servico.opcaoId === opcao.id && f.servico.precoCentavos === opcao.precoCentavos && p.pix && p.pix.qrCode) {
+    const checkout = f.forma === 'checkout';
+    const guardado = checkout ? !!(p.checkout && p.checkout.url) : !!(p.pix && p.pix.qrCode);
+    if (pag && pag.status === 'pending' && pag.expiraEm > agora && (pag.tipo === 'checkout') === checkout && f.servico && f.servico.opcaoId === opcao.id && f.servico.precoCentavos === opcao.precoCentavos && guardado) {
       return { reaproveitar: true };
     }
     if (f.pagando && agora - f.pagando < 45000) {
-      throw new ErroNegocio('em_andamento', 'Já estamos gerando o seu Pix. Aguarde alguns segundos.', 409);
+      throw new ErroNegocio('em_andamento', 'Já estamos gerando o seu pagamento. Aguarde alguns segundos.', 409);
     }
     tx.update(fr, { pagando: agora });
     return {
       reaproveitar: false,
       opcao,
       dest,
-      pixAntigo: pag && pag.status === 'pending' ? pag.id : null,
+      pixAntigo: pag && pag.status === 'pending' && pag.tipo !== 'checkout' ? pag.id : null,
       tentativas: f.tentativasPix || 0,
       clienteNome: f.clienteNome,
+      checkout,
+      pecasCentavos: checkout ? f.pecasCentavos || 0 : 0,
+      pecasQtd: checkout && Array.isArray(f.pecas) ? f.pecas.length : 0,
     };
   });
 
   if (reserva.reaproveitar) return infoPublica(ctx, token);
 
   const liberar = () => fr.update({ pagando: null }).catch(() => {});
+
+  if (reserva.checkout) {
+    await pagarNoCheckout(ctx, { token, id, cfg, cred, agora, reserva, liberar });
+    return infoPublica(ctx, token);
+  }
 
   // Fase 2 — fora da transação (chamadas de rede).
   if (reserva.pixAntigo) await cancelarPixSilencioso(ctx, cred, reserva.pixAntigo);
@@ -416,6 +463,84 @@ async function pagar(ctx, token, entrada) {
   return infoPublica(ctx, token);
 }
 
+/**
+ * Fase 2 e 3 do pagamento quando a cliente paga na página do Mercado Pago: uma só cobrança com as peças (se houver) + o frete.
+ * O valor total é sempre calculado aqui, do que foi gravado no link e da cotação — nunca de algo enviado pela tela.
+ */
+async function pagarNoCheckout(ctx, { token, id, cfg, cred, agora, reserva, liberar }) {
+  const fr = refFrete(ctx, id);
+  const pr = refPriv(ctx, id);
+  const totalCentavos = reserva.pecasCentavos + reserva.opcao.precoCentavos;
+  const aPartirDe = Math.round(cfg.parcelasAPartirDe * 100);
+  const parcelasMax = totalCentavos >= aPartirDe ? cfg.parcelasMax : 1;
+  const partes = reserva.dest.nome.split(' ');
+  const expiraEmMs = agora + Math.min(43200, Math.max(30, cfg.pixValidadeMin)) * 60000;
+  const itens = [];
+  if (reserva.pecasCentavos > 0) itens.push({ id: 'pecas', titulo: `Peças da live (${reserva.pecasQtd})`, valorCentavos: reserva.pecasCentavos });
+  itens.push({ id: 'frete', titulo: `Frete ${reserva.opcao.empresa} ${reserva.opcao.nome}`, valorCentavos: reserva.opcao.precoCentavos });
+
+  let r;
+  try {
+    r = await MP.criarPreferencia(ctx, cred.mp, {
+      itens,
+      referencia: `DPE-${id}`,
+      email: reserva.dest.email,
+      nome: partes[0],
+      sobrenome: partes.slice(1).join(' '),
+      parcelasMax,
+      expiraEmMs,
+      notificationUrl: cfg.siteUrl ? `${cfg.siteUrl}/api/mp/webhook` : '',
+      retornoUrl: cfg.siteUrl ? `${cfg.siteUrl}/f/${token}` : '',
+    });
+  } catch (e) {
+    await liberar();
+    throw e;
+  }
+  if (!r.ok) {
+    await liberar();
+    await fr.update({ alerta: { texto: `Pagamento: ${r.erro}`, em: ctx.now() } }).catch(() => {});
+    throw new ErroNegocio('pagamento_indisponivel', 'Não conseguimos abrir o pagamento agora. Tente de novo em instantes ou avise a loja.', 502);
+  }
+
+  await ctx.db.runTransaction(async (tx) => {
+    const sf = await tx.get(fr);
+    const f = sf.data();
+    tx.update(fr, {
+      status: ANTES_DO_PAGAMENTO.includes(f.status) ? 'aguardando_pagamento' : f.status,
+      servico: {
+        opcaoId: reserva.opcao.id,
+        servicoId: reserva.opcao.servicoId,
+        empresa: reserva.opcao.empresa,
+        nome: reserva.opcao.nome,
+        precoCentavos: reserva.opcao.precoCentavos,
+        prazoDias: reserva.opcao.prazoDias,
+      },
+      destinatarioNome: reserva.dest.nome,
+      cep: reserva.dest.cep,
+      cidade: reserva.dest.cidade,
+      uf: reserva.dest.uf,
+      pagamento: {
+        provedor: 'mercadopago',
+        tipo: 'checkout',
+        id: '',
+        preferenciaId: r.preferencia.id,
+        status: 'pending',
+        valorCentavos: totalCentavos,
+        parcelasMax,
+        criadoEm: agora,
+        expiraEm: expiraEmMs,
+        pagoEm: 0,
+      },
+      pagando: null,
+      tentativasPix: (f.tentativasPix || 0) + 1,
+      alerta: null,
+      atualizadoEm: agora,
+    });
+    tx.set(pr, { destinatario: reserva.dest, checkout: { url: r.preferencia.url, preferenciaId: r.preferencia.id } }, { merge: true });
+  });
+  ctx.log.info('Pagamento (checkout) do frete criado', { frete: id });
+}
+
 /* ------------------------------------------------------------- Conciliação */
 
 /**
@@ -423,6 +548,29 @@ async function pagar(ctx, token, entrada) {
  * Idempotente: pode ser chamada pelo webhook, pela página da cliente, pela rotina e pela administradora.
  */
 async function aplicarPagamentoRemoto(ctx, remoto) {
+  const res = await aplicarPagamentoNoFrete(ctx, remoto);
+  if (res.motivo === 'pago') await marcarPecasPagas(ctx, res.freteId).catch((e) => ctx.log.warn('Não foi possível marcar as peças como pagas', { motivo: U.limparParaLog(e && e.message) }));
+  return res;
+}
+
+/**
+ * Depois que o pagamento é aprovado, as peças incluídas no link passam a "pagas" no app da live (só as que ainda não estavam).
+ * Se falhar, o pagamento continua valendo; a dona pode marcar à mão. Idempotente.
+ */
+async function marcarPecasPagas(ctx, freteId) {
+  const s = await refFrete(ctx, freteId).get();
+  const pecas = s.exists && Array.isArray(s.data().pecas) ? s.data().pecas : [];
+  if (!pecas.length) return;
+  await ctx.db.runTransaction(async (tx) => {
+    const refs = pecas.map((p) => ctx.db.doc(`vendas/${p.id}`));
+    const snaps = await tx.getAll(refs);
+    snaps.forEach((sn, i) => {
+      if (sn.exists && sn.data().pago !== true) tx.update(refs[i], { pago: true });
+    });
+  });
+}
+
+async function aplicarPagamentoNoFrete(ctx, remoto) {
   const m = REF_PIX.exec(remoto.referencia || '');
   if (!m) return { tratado: false, motivo: 'sem_referencia' };
   const id = m[1];
@@ -434,32 +582,36 @@ async function aplicarPagamentoRemoto(ctx, remoto) {
     if (!sf.exists) return { tratado: false, motivo: 'frete_desconhecido' };
     const sp = await tx.get(pr);
     const p = sp.exists ? sp.data() : {};
-    // Só reconhece pagamentos que NÓS criamos para este frete.
-    if (!(p.pagamentos || []).includes(remoto.id)) return { tratado: false, motivo: 'pagamento_desconhecido' };
-
     const f = sf.data();
     const atual = f.pagamento || {};
     const agora = ctx.now();
+    const checkout = f.forma === 'checkout';
+    // Pix direto: só reconhece pagamentos que NÓS criamos. Página do Mercado Pago: o pagamento nasce lá, então vale o que
+    // traz a referência deste frete (o Mercado Pago só a coloca em cobranças da nossa conta) e o valor tem que bater.
+    if (!checkout && !(p.pagamentos || []).includes(remoto.id)) return { tratado: false, motivo: 'pagamento_desconhecido' };
+    if (checkout && atual.tipo !== 'checkout') return { tratado: false, motivo: 'pagamento_desconhecido' };
+    const esperado = checkout ? atual.valorCentavos : f.servico && f.servico.precoCentavos;
+    const nomeDoPagamento = checkout ? 'pagamento' : 'Pix';
 
     if (remoto.status === 'approved') {
       if (JA_PAGOS.includes(f.status)) {
         if (atual.id === remoto.id) return { tratado: true, mudou: false };
         // Segundo Pix aprovado para o mesmo frete: dinheiro em duplicidade — a loja precisa saber.
-        tx.update(fr, { alerta: { texto: `Pagamento em duplicidade: o Pix ${remoto.id} também foi aprovado. Devolva um deles no Mercado Pago.`, em: agora } });
+        tx.update(fr, { alerta: { texto: `Pagamento em duplicidade: o ${nomeDoPagamento} ${remoto.id} também foi aprovado. Devolva um deles no Mercado Pago.`, em: agora } });
         return { tratado: true, mudou: true, motivo: 'duplicado' };
       }
-      if (f.status === 'aguardando_pagamento' && f.servico && remoto.valorCentavos === f.servico.precoCentavos) {
+      if (f.status === 'aguardando_pagamento' && f.servico && Number.isFinite(esperado) && remoto.valorCentavos === esperado) {
         tx.update(fr, {
           status: 'pago',
           pagamento: { ...atual, id: remoto.id, status: 'approved', valorCentavos: remoto.valorCentavos, pagoEm: agora },
           alerta: null,
           atualizadoEm: agora,
         });
-        return { tratado: true, mudou: true, motivo: 'pago' };
+        return { tratado: true, mudou: true, motivo: 'pago', freteId: id };
       }
       tx.update(fr, {
         alerta: {
-          texto: `O Pix ${remoto.id} foi aprovado (${U.reais(remoto.valorCentavos)}), mas não confere com o frete escolhido${f.servico ? ` (${U.reais(f.servico.precoCentavos)})` : ''}. Confira no Mercado Pago.`,
+          texto: `O ${nomeDoPagamento} ${remoto.id} foi aprovado (${U.reais(remoto.valorCentavos)}), mas não confere com ${checkout ? 'o total do link' : 'o frete escolhido'}${Number.isFinite(esperado) ? ` (${U.reais(esperado)})` : ''}${f.status === 'cancelado' ? ' — o link estava cancelado' : ''}. Confira no Mercado Pago.`,
           em: agora,
         },
       });
@@ -476,7 +628,8 @@ async function aplicarPagamentoRemoto(ctx, remoto) {
       });
       return { tratado: true, mudou: true, motivo: 'estornado' };
     }
-    if (['expired', 'cancelled', 'rejected'].includes(remoto.status) && atual.status === 'pending') {
+    // Na página do Mercado Pago uma tentativa recusada não encerra nada: a cliente pode tentar outro cartão no mesmo link.
+    if (!checkout && ['expired', 'cancelled', 'rejected'].includes(remoto.status) && atual.status === 'pending') {
       tx.update(fr, { pagamento: { ...atual, status: remoto.status }, atualizadoEm: agora });
       return { tratado: true, mudou: true, motivo: remoto.status };
     }
@@ -493,6 +646,17 @@ async function sincronizarPagamento(ctx, id, { minIntervaloMs = 0 } = {}) {
 
   const cred = await lerCredenciais(ctx);
   await refFrete(ctx, id).update({ pagamentoVerificadoEm: ctx.now() });
+  if (f.pagamento.tipo === 'checkout') {
+    // O pagamento nasce na página do Mercado Pago: procura pelos pagamentos desta referência.
+    const b = await MP.buscarPorReferencia(ctx, cred.mp, `DPE-${id}`);
+    if (!b.ok) return { mudou: false, erro: b.erro, retentavel: b.retentavel };
+    let mudou = false;
+    for (const pag of b.pagamentos.sort((x, y) => Number(y.status === 'approved') - Number(x.status === 'approved'))) {
+      const res = await aplicarPagamentoRemoto(ctx, pag);
+      mudou = mudou || !!res.mudou;
+    }
+    return { tratado: true, mudou };
+  }
   const r = await MP.consultarPagamento(ctx, cred.mp, f.pagamento.id);
   if (!r.ok) return { mudou: false, erro: r.erro, retentavel: r.retentavel };
   return aplicarPagamentoRemoto(ctx, r.pagamento);
@@ -562,7 +726,7 @@ async function cancelarFrete(ctx, freteId) {
     tx.update(fr, { status: 'cancelado', canceladoEm: ctx.now(), atualizadoEm: ctx.now() });
     return f;
   });
-  if (antes.pagamento && antes.pagamento.status === 'pending') await cancelarPixSilencioso(ctx, cred, antes.pagamento.id);
+  if (antes.pagamento && antes.pagamento.status === 'pending' && antes.pagamento.tipo !== 'checkout') await cancelarPixSilencioso(ctx, cred, antes.pagamento.id);
   return { ok: true };
 }
 

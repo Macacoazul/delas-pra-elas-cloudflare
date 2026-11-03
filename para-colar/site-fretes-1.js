@@ -12,7 +12,7 @@
 export default {
   "/fretes.js": {
     tipo: "text/javascript; charset=utf-8",
-    etag: "951ff6a519877185",
+    etag: "4d08205be5954868",
     parte: 1,
     de: 2,
     corpo: `/* fretes.js — a tela de Fretes
@@ -589,7 +589,7 @@ export default {
     { id: "g", nome: "Grande", altura: 15, largura: 30, comprimento: 40 },
   ];
   var MENSAGEM_LINK_PADRAO =
-    "Oi {nome}! Para receber suas peças, é só abrir o link, digitar o seu CEP e escolher o frete: {link}";
+    "Oi {nome}! Seu pedido está separado. Abra o link, digite o seu CEP, escolha o frete e pague tudo de uma vez (Pix, cartão de crédito ou débito): {link}";
   var REMETENTE_VAZIO = {
     nome: "",
     telefone: "",
@@ -608,6 +608,9 @@ export default {
     transportadoras: ["Correios", "Jadlog"],
     mostrarOutras: false,
     pixValidadeMin: 1440,
+    formaPagamento: "checkout",
+    parcelasMax: 3,
+    parcelasAPartirDe: 120,
     siteUrl: "",
     etiquetaPublica: true,
     naoComercial: true,
@@ -1312,6 +1315,9 @@ export default {
       transportadoras: config.transportadoras.join(", "),
       mostrarOutras: !!config.mostrarOutras,
       pixMin: config.pixValidadeMin,
+      formaPagamento: config.formaPagamento === "pix" ? "pix" : "checkout",
+      parcelasMax: String(config.parcelasMax || 3),
+      parcelasAPartirDe: paraCampo(config.parcelasAPartirDe === void 0 ? 120 : config.parcelasAPartirDe),
       siteUrl: config.siteUrl || "",
       etiquetaPublica: config.etiquetaPublica !== false,
       naoComercial: config.naoComercial !== false,
@@ -1410,6 +1416,9 @@ export default {
         transportadoras,
         mostrarOutras: d.mostrarOutras,
         pixValidadeMin: d.pixMin,
+        formaPagamento: d.formaPagamento,
+        parcelasMax: Number(d.parcelasMax),
+        parcelasAPartirDe: lerNumero(d.parcelasAPartirDe),
         siteUrl: site,
         etiquetaPublica: d.etiquetaPublica,
         naoComercial: d.naoComercial,
@@ -1526,6 +1535,61 @@ export default {
           },
           "Voltar às caixas de exemplo",
         ),
+      ),
+      h(
+        Campo,
+        {
+          rotulo: "Transportadoras mostradas à cliente",
+          ajuda: "Separe por vírgula. Fica só o que você usa; normalmente Correios e Jadlog.",
+        },
+        h("input", {
+          style: S2.input,
+          value: d.transportadoras,
+          onChange: (e) => mudar("transportadoras", e.target.value),
+        }),
+      ),
+      h(Interruptor, {
+        ligado: d.mostrarOutras,
+        onMudar: (v) => mudar("mostrarOutras", v),
+        titulo: "Mostrar também outras transportadoras",
+        ajuda: "Se desligado, só aparecem as de cima.",
+      }),
+      h(
+        Campo,
+        {
+          rotulo: "Como a cliente paga",
+          ajuda:
+            "Página do Mercado Pago: a cliente escolhe Pix, cartão de crédito (à vista ou parcelado) ou débito, e pode pagar as peças junto com o frete. Só Pix: cobra apenas o frete, com o QR Code aqui no link. Links com peças sempre usam a página do Mercado Pago.",
+        },
+        h(
+          "div",
+          { style: S2.segmento, role: "group", "aria-label": "Como a cliente paga" },
+          [
+            ["checkout", "Pix, crédito e débito"],
+            ["pix", "Só Pix (só frete)"],
+          ].map(([v, nome]) =>
+            h(
+              "button",
+              {
+                key: v,
+                style: { ...S2.segBtn, ...(d.formaPagamento === v ? S2.segOn : {}) },
+                onClick: () => mudar("formaPagamento", v),
+                "aria-pressed": d.formaPagamento === v,
+              },
+              nome,
+            ),
+          ),
+        ),
+      ),
+      h(
+        Campo,
+        {
+          rotulo: "Parcelas no cartão de crédito (até)",
+          ajuda:
+            "Para parcelar SEM acréscimo para a cliente, ative “parcelamento sem juros” na sua conta do Mercado Pago (você escolhe quantas vezes). Aqui você só limita o máximo que a página oferece.",
+        },
+        h(
+          "select",
 `,
   },
 };

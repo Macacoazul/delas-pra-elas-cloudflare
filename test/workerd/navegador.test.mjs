@@ -158,6 +158,9 @@ test('navegador no Workers: a tela de Fretes abre e a dona cria o link', { skip:
   await adm.getByPlaceholder('Nome da cliente').fill('mar');
   await adm.getByRole('button', { name: /^Maria da Silva/ }).click();
   await adm.getByPlaceholder('(47) 99999-9999').fill('47999998888');
+  await ver(adm, 'Peças neste link (cobradas junto com o frete)');
+  await ver(adm, /Blusa jeans/);
+  await ver(adm, /1 peça\(s\) · R\$\s*45,90/);
   await adm.getByRole('button', { name: /Média/ }).click();
   await adm.getByRole('button', { name: '1 kg', exact: true }).click();
   await adm.getByRole('button', { name: 'Gerar link' }).click();
@@ -170,13 +173,15 @@ test('navegador no Workers: a tela de Fretes abre e a dona cria o link', { skip:
   await ver(adm, 'Aguardando a cliente abrir o link', 8000);
 });
 
-test('navegador no Workers: a cliente abre o link, escolhe o frete e gera o Pix', { skip: PULAR }, async () => {
+test('navegador no Workers: a cliente abre o link, vê as peças, escolhe o frete e vai para o pagamento do Mercado Pago', { skip: PULAR }, async () => {
   const cliente = await novoCelular('cliente');
   estado.cliente = cliente;
   const cli = cliente.pagina;
   await cli.goto(`${worker.base}/f/${estado.token}`);
   await ver(cli, 'Oi, Maria!');
   await ver(cli, 'Seu pacote: 32 × 25 × 10 cm · 1 kg');
+  await ver(cli, 'Seu pedido');
+  await ver(cli, 'Blusa jeans');
 
   await cli.locator('#cep').fill('01310100');
   assert.equal(await cli.locator('#cep').inputValue(), '01310-100');
@@ -193,28 +198,33 @@ test('navegador no Workers: a cliente abre o link, escolhe o frete e gera o Pix'
   await cli.locator('#email').fill('maria@exemplo.com');
   await cli.locator('#cpf').fill(CPF_CLIENTE);
   await cli.locator('#numero').fill('250');
-  await cli.getByRole('button', { name: /Gerar Pix de/ }).click();
-  await ver(cli, 'Pague o frete com Pix', 15_000);
-  const codigo = await cli.locator('textarea.codigo').inputValue();
-  assert.ok(codigo.startsWith('000201'), codigo.slice(0, 20));
-  assert.ok((await cli.locator('.pix img').getAttribute('src')).startsWith('data:image/png;base64,'), 'QR Code como imagem embutida');
+  await cli.getByRole('button', { name: /Ir para o pagamento · / }).click();
+  await ver(cli, 'Escolha como pagar', 15_000);
+  await ver(cli, /Pix — aprovação na hora/);
+  await ver(cli, /Cartão de crédito à vista/); // total abaixo de R$ 120: sem parcelamento
+  await ver(cli, /Cartão de débito/);
+  const pagar = cli.getByRole('link', { name: /^Pagar R\$/ });
+  assert.match(await pagar.getAttribute('href'), /^https:\/\/www\.mercadopago\.com\.br\/checkout\/v1\/redirect\?pref_id=PREF-/);
+  const pref = mocks.ultimaPreferencia();
+  assert.equal(pref.items.length, 2, 'peças + frete');
+  assert.equal(pref.payment_methods.installments, 1);
+  assert.equal(Math.round(pref.items[0].unit_price * 100), 4590);
 });
 
 test('navegador no Workers: o Mercado Pago avisa — a dona é avisada, a cliente vê "pago" e a dona gera a etiqueta', { skip: PULAR }, async () => {
   const { dona, cliente } = estado;
   const adm = dona.pagina;
-  const idPix = mocks.ultimoPagamento().id;
-  await ver(adm, 'Aguardando o Pix', 15_000);
+  await ver(adm, 'Aguardando o pagamento', 15_000);
+  const idPix = mocks.pagarNaPagina(mocks.ultimaPreferencia(), { parcelas: 3 }).id; // a cliente paga na página do Mercado Pago
 
-  mocks.aprovar(idPix);
   const aviso = await fetch(`${worker.base}/api/mp/webhook?data.id=${idPix}&type=payment`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...mocks.assinar(idPix) },
     body: JSON.stringify({ type: 'payment', data: { id: idPix } }),
   });
   assert.equal(aviso.status, 200);
-  await ver(adm, /Maria pagou o frete!/, 12_000);
-  await ver(cliente.pagina, 'Frete pago, obrigada!', 20_000);
+  await ver(adm, /Maria pagou!/, 12_000);
+  await ver(cliente.pagina, 'Pagamento confirmado, obrigada!', 20_000);
 
   await adm.locator('button', { hasText: 'Maria da Silva' }).first().click();
   await ver(adm, /Pago em/);

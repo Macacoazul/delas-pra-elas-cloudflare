@@ -15,6 +15,7 @@ const CONFIG_BASE = {
   ],
   transportadoras: ['Correios', 'Jadlog'],
   mostrarOutras: false,
+  formaPagamento: 'pix', // os testes de Pix; os do checkout pedem 'checkout' (ou incluem peças)
   pixValidadeMin: 1440,
   siteUrl: 'https://loja-teste.workers.dev',
   etiquetaPublica: true,

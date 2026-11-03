@@ -30,7 +30,7 @@ const CAIXAS_PADRAO = [
 ];
 
 const MENSAGEM_LINK_PADRAO =
-  'Oi {nome}! Para receber suas peças, é só abrir o link, digitar o seu CEP e escolher o frete: {link}';
+  'Oi {nome}! Seu pedido está separado. Abra o link, digite o seu CEP, escolha o frete e pague tudo de uma vez (Pix, cartão de crédito ou débito): {link}';
 
 function numeroEntre(v, min, max, padrao) {
   const n = typeof v === 'string' ? Number(v.replace(',', '.')) : Number(v);
@@ -87,6 +87,9 @@ function normalizarConfig(raw) {
     transportadoras: transportadoras.length ? transportadoras : ['Correios', 'Jadlog'],
     mostrarOutras: c.mostrarOutras === true,
     pixValidadeMin: Math.round(numeroEntre(c.pixValidadeMin, 30, 43200, 1440)),
+    formaPagamento: c.formaPagamento === 'pix' ? 'pix' : 'checkout',
+    parcelasMax: Math.round(numeroEntre(c.parcelasMax, 1, 12, 3)),
+    parcelasAPartirDe: numeroEntre(c.parcelasAPartirDe, 0, 10000, 120),
     siteUrl,
     etiquetaPublica: c.etiquetaPublica !== false,
     naoComercial: c.naoComercial !== false,

@@ -12,6 +12,7 @@
 | CSRF | Rotas com cookie só aceitam pedidos do próprio site (cabeçalhos `Origin`/`Sec-Fetch-Site`) e corpo JSON. |
 | Dados sensíveis | Tokens, assinatura do webhook, CPF, e-mail e endereço da cliente e dados do Pix ficam **criptografados** (AES-GCM) no D1, com chave derivada do `SEGREDO`. |
 | Link da cliente | Código aleatório de 32 caracteres; código com formato inválido é recusado sem nem consultar o banco. A resposta pública nunca traz CPF, endereço completo, token ou dados internos. Limites por link: CEP 20/h e Pix 10/h. |
+| Pagamento na página do Mercado Pago | O valor total (peças + frete) é calculado no servidor a partir das vendas gravadas e da cotação; a tela só escolhe quais peças. A cobrança só é aceita se a referência e o **valor total** conferirem na consulta direta ao Mercado Pago. O endereço da página de pagamento precisa ser `https` do domínio do Mercado Pago. Dados de cartão nunca passam pelo site. |
 | Webhook do Mercado Pago | Formato da assinatura checado primeiro; depois HMAC com a assinatura secreta; por fim o pagamento é **consultado de novo** no Mercado Pago (valor e referência). Sem a assinatura secreta cadastrada, todo aviso é recusado (503). |
 | Tamanho dos pedidos | 64 KB (1 MB só para a restauração do backup), lido por partes. |
 | Cabeçalhos | HSTS, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, e política de conteúdo (CSP) sem `unsafe-inline` nas páginas. |

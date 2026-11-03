@@ -63,6 +63,9 @@ export function SheetAjustes({ config, onClose, onFlash, onSalvo, aoPerderLogin 
     transportadoras: config.transportadoras.join(', '),
     mostrarOutras: !!config.mostrarOutras,
     pixMin: config.pixValidadeMin,
+    formaPagamento: config.formaPagamento === 'pix' ? 'pix' : 'checkout',
+    parcelasMax: String(config.parcelasMax || 3),
+    parcelasAPartirDe: paraCampo(config.parcelasAPartirDe === undefined ? 120 : config.parcelasAPartirDe),
     siteUrl: config.siteUrl || '',
     etiquetaPublica: config.etiquetaPublica !== false,
     naoComercial: config.naoComercial !== false,
@@ -141,6 +144,9 @@ export function SheetAjustes({ config, onClose, onFlash, onSalvo, aoPerderLogin 
       transportadoras,
       mostrarOutras: d.mostrarOutras,
       pixValidadeMin: d.pixMin,
+      formaPagamento: d.formaPagamento,
+      parcelasMax: Number(d.parcelasMax),
+      parcelasAPartirDe: lerNumero(d.parcelasAPartirDe),
       siteUrl: site,
       etiquetaPublica: d.etiquetaPublica,
       naoComercial: d.naoComercial,
@@ -213,7 +219,33 @@ export function SheetAjustes({ config, onClose, onFlash, onSalvo, aoPerderLogin 
       </Campo>
       <Interruptor ligado={d.mostrarOutras} onMudar={(v) => mudar('mostrarOutras', v)} titulo="Mostrar também outras transportadoras" ajuda="Se desligado, só aparecem as de cima." />
 
-      <Campo rotulo="Quanto tempo o Pix fica valendo" ajuda="Depois disso a cliente pode gerar outro Pix pelo mesmo link.">
+      <Campo
+        rotulo="Como a cliente paga"
+        ajuda="Página do Mercado Pago: a cliente escolhe Pix, cartão de crédito (à vista ou parcelado) ou débito, e pode pagar as peças junto com o frete. Só Pix: cobra apenas o frete, com o QR Code aqui no link. Links com peças sempre usam a página do Mercado Pago."
+      >
+        <div style={S.segmento} role="group" aria-label="Como a cliente paga">
+          {[['checkout', 'Pix, crédito e débito'], ['pix', 'Só Pix (só frete)']].map(([v, nome]) => (
+            <button key={v} style={{ ...S.segBtn, ...(d.formaPagamento === v ? S.segOn : {}) }} onClick={() => mudar('formaPagamento', v)} aria-pressed={d.formaPagamento === v}>
+              {nome}
+            </button>
+          ))}
+        </div>
+      </Campo>
+      <Campo
+        rotulo="Parcelas no cartão de crédito (até)"
+        ajuda="Para parcelar SEM acréscimo para a cliente, ative “parcelamento sem juros” na sua conta do Mercado Pago (você escolhe quantas vezes). Aqui você só limita o máximo que a página oferece."
+      >
+        <select style={S.input} value={d.parcelasMax} onChange={(e) => mudar('parcelasMax', e.target.value)}>
+          {[1, 2, 3, 4, 5, 6, 8, 10, 12].map((n) => (
+            <option key={n} value={String(n)}>{n === 1 ? 'Só à vista' : `${n}x`}</option>
+          ))}
+        </select>
+      </Campo>
+      <Campo rotulo="Parcelar só a partir de (R$)" ajuda="Abaixo desse total do pedido a página oferece apenas pagamento à vista. Exemplo: 120.">
+        <input style={S.input} inputMode="decimal" value={d.parcelasAPartirDe} onChange={(e) => mudar('parcelasAPartirDe', e.target.value)} />
+      </Campo>
+
+      <Campo rotulo="Quanto tempo o link de pagamento fica valendo" ajuda="Depois disso a cliente gera outro pagamento pelo mesmo link.">
         <select style={S.input} value={d.pixMin} onChange={(e) => mudar('pixMin', Number(e.target.value))}>
           {opcoesPix.map(([min, nome]) => (
             <option key={min} value={min}>{nome}</option>

@@ -50,12 +50,14 @@ async function salvarAjustes(ctx, _u, d) {
   return limpo;
 }
 
-/** Peças da cliente (data e valor), para sugerir o valor declarado do envio. */
+/** Peças da cliente (id, nome, data, valor e se já está paga): sugerem o valor declarado e deixam escolher o que entra no link de pagamento. */
 async function vendasDaCliente(ctx, _u, d) {
   const id = d && d.clienteId;
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new ErroNegocio('parametro_invalido', 'Parâmetro inválido: clienteId.');
   const q = await ctx.db.collection('vendas').where('clienteId', '==', id).get();
-  return q.docs.map((s) => s.data()).filter((v) => v && v.data).map((v) => ({ data: v.data, valor: Number(v.valor) || 0 }));
+  return q.docs
+    .filter((s) => s.data() && s.data().data)
+    .map((s) => ({ id: s.id, data: s.data().data, valor: Number(s.data().valor) || 0, peca: String(s.data().peca || '').slice(0, 80), pago: s.data().pago === true }));
 }
 
 const acoes = {

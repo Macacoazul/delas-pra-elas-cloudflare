@@ -12,33 +12,33 @@
 export default {
   "/fretes.js": {
     tipo: "text/javascript; charset=utf-8",
-    etag: "951ff6a519877185",
+    etag: "4d08205be5954868",
     parte: 2,
     de: 2,
-    corpo: `      ),
+    corpo: `          { style: S2.input, value: d.parcelasMax, onChange: (e) => mudar("parcelasMax", e.target.value) },
+          [1, 2, 3, 4, 5, 6, 8, 10, 12].map((n) =>
+            h("option", { key: n, value: String(n) }, n === 1 ? "Só à vista" : \`\${n}x\`),
+          ),
+        ),
+      ),
       h(
         Campo,
         {
-          rotulo: "Transportadoras mostradas à cliente",
-          ajuda: "Separe por vírgula. Fica só o que você usa; normalmente Correios e Jadlog.",
+          rotulo: "Parcelar só a partir de (R$)",
+          ajuda: "Abaixo desse total do pedido a página oferece apenas pagamento à vista. Exemplo: 120.",
         },
         h("input", {
           style: S2.input,
-          value: d.transportadoras,
-          onChange: (e) => mudar("transportadoras", e.target.value),
+          inputMode: "decimal",
+          value: d.parcelasAPartirDe,
+          onChange: (e) => mudar("parcelasAPartirDe", e.target.value),
         }),
       ),
-      h(Interruptor, {
-        ligado: d.mostrarOutras,
-        onMudar: (v) => mudar("mostrarOutras", v),
-        titulo: "Mostrar também outras transportadoras",
-        ajuda: "Se desligado, só aparecem as de cima.",
-      }),
       h(
         Campo,
         {
-          rotulo: "Quanto tempo o Pix fica valendo",
-          ajuda: "Depois disso a cliente pode gerar outro Pix pelo mesmo link.",
+          rotulo: "Quanto tempo o link de pagamento fica valendo",
+          ajuda: "Depois disso a cliente gera outro pagamento pelo mesmo link.",
         },
         h(
           "select",
@@ -579,8 +579,8 @@ export default {
           : { txt: "Aguardando a cliente abrir o link", cor: "amber" };
       case "aguardando_pagamento":
         return p && p.status === "pending" && p.expiraEm && p.expiraEm < agora
-          ? { txt: "Pix venceu sem pagamento", cor: "amber" }
-          : { txt: "Aguardando o Pix", cor: "amber" };
+          ? { txt: p.tipo === "checkout" ? "Link de pagamento venceu" : "Pix venceu sem pagamento", cor: "amber" }
+          : { txt: p && p.tipo === "checkout" ? "Aguardando o pagamento" : "Aguardando o Pix", cor: "amber" };
       case "pago":
         return { txt: "Pago · gerar etiqueta", cor: "green" };
       case "etiqueta":
@@ -607,12 +607,15 @@ export default {
     if (!p) return f.status === "cancelado" ? "—" : "A cliente ainda não escolheu o frete";
     if (p.status === "approved") return \`Pago em \${dataHora(p.pagoEm)}\`;
     if (p.status === "pending") {
-      return p.expiraEm > agora ? \`Aguardando o Pix (vale até \${dataHora(p.expiraEm)})\` : "Pix venceu sem pagamento";
+      const nome = p.tipo === "checkout" ? "o pagamento" : "o Pix";
+      return p.expiraEm > agora
+        ? \`Aguardando \${nome} (vale até \${dataHora(p.expiraEm)})\`
+        : p.tipo === "checkout"
+          ? "Link de pagamento venceu"
+          : "Pix venceu sem pagamento";
     }
     if (p.status === "refunded") return "Pagamento estornado";
-    return (
-      { expired: "Pix venceu", cancelled: "Pix cancelado", rejected: "Pix recusado" }[p.status] || String(p.status)
-    );
+    return { expired: "Venceu", cancelled: "Cancelado", rejected: "Recusado" }[p.status] || String(p.status);
   }
   function CartaoFrete({ f, agora, onAbrir }) {
     const s = situacao(f, agora);
@@ -654,6 +657,8 @@ export default {
     const [obs, setObs] = useState("");
     const [mais, setMais] = useState(false);
     const [live, setLive] = useState(null);
+    const [vendas, setVendas] = useState([]);
+    const [marcadas, setMarcadas] = useState([]);
     const [erro, setErro] = useState("");
     const [salvando, setSalvando] = useState(false);
     const [criado, setCriado] = useState(null);
@@ -664,14 +669,21 @@ export default {
     }, [nome, cliente, clientes]);
     useEffect(() => {
       setLive(null);
+      setVendas([]);
+      setMarcadas([]);
       if (!cliente || !cliente.id) return void 0;
       let vivo = true;
       chamar("vendasDaCliente", { clienteId: cliente.id })
-        .then((vendas) => {
-          if (!vivo || !Array.isArray(vendas) || !vendas.length) return;
-          const ultima = vendas.reduce((m, v) => (v.data > m ? v.data : m), "");
-          const total = vendas.filter((v) => v.data === ultima).reduce((x, v) => x + (Number(v.valor) || 0), 0);
+        .then((lista) => {
+          if (!vivo || !Array.isArray(lista) || !lista.length) return;
+          const ultima = lista.reduce((m, v) => (v.data > m ? v.data : m), "");
+          const total = lista.filter((v) => v.data === ultima).reduce((x, v) => x + (Number(v.valor) || 0), 0);
           if (total > 0) setLive({ data: ultima, total });
+          const abertas = lista
+            .filter((v) => !v.pago && v.valor > 0)
+            .sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0));
+          setVendas(abertas);
+          if (abertas.length) setMarcadas(abertas.filter((v) => v.data === abertas[0].data).map((v) => v.id));
         })
         .catch(() => {});
       return () => {
@@ -684,6 +696,8 @@ export default {
       setWpp(c.whatsapp || "");
       setErro("");
     };
+    const alternar = (id) => setMarcadas((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+    const totalPecas = vendas.filter((v) => marcadas.includes(v.id)).reduce((x, v) => x + v.valor, 0);
     const criar = async () => {
       const pesoNum = lerNumero(peso);
       const declNum = lerNumero(declarado);
@@ -705,9 +719,10 @@ export default {
           valorDeclarado: declNum,
           conteudo: conteudo.trim(),
           observacao: obs.trim(),
+          vendaIds: marcadas,
         });
         aoMudar();
-        setCriado({ ...r, nome: nome.trim(), whatsapp: wpp });
+        setCriado({ ...r, nome: nome.trim(), whatsapp: wpp, comPecas: marcadas.length > 0 });
       } catch (e) {
         setErro(e.message);
       }
@@ -724,7 +739,10 @@ export default {
           { style: { ...S2.subtitulo, lineHeight: 1.5 } },
           "Envie para ",
           h("strong", null, primeiroNome(criado.nome)),
-          ". Ela digita o CEP, escolhe o frete e paga o Pix. Você é avisada aqui quando cair.",
+          ". Ela digita o CEP, escolhe o frete e paga",
+          " ",
+          criado.comPecas ? "as peças e o frete de uma vez" : "o frete",
+          ", com Pix, cartão de crédito ou débito. Você é avisada aqui quando cair.",
         ),
         h(LinhaCopiavel, { texto: link, onCopiado: (ok) => onFlash(ok ? "Link copiado" : "Não consegui copiar") }),
         h(
@@ -792,6 +810,46 @@ export default {
         value: wpp,
         onChange: (e) => setWpp(e.target.value),
       }),
+      cliente &&
+        vendas.length > 0 &&
+        h(
+          Fragment,
+          null,
+          h("label", { style: S2.label }, "Peças neste link (cobradas junto com o frete)"),
+          h(
+            "div",
+            { style: S2.sugBox },
+            vendas.map((v) =>
+              h(
+                "button",
+                {
+                  key: v.id,
+                  style: S2.sugItem,
+                  onClick: () => alternar(v.id),
+                  role: "checkbox",
+                  "aria-checked": marcadas.includes(v.id),
+                },
+                h(
+                  "span",
+                  null,
+                  marcadas.includes(v.id) ? "☑" : "☐",
+                  " ",
+                  v.peca || "Peça",
+                  " ",
+                  h("span", { style: { fontSize: 12, color: t.inkFaint } }, "· live de ", diaMes(v.data)),
+                ),
+                h("span", { style: { fontSize: 14 } }, brl(v.valor)),
+              ),
+            ),
+          ),
+          h(
+            "p",
+            { style: S2.ajuda },
+            marcadas.length
+              ? \`\${marcadas.length} peça(s) · \${brl(totalPecas)}. A cliente paga isso + o frete de uma vez, e as peças são marcadas como pagas sozinhas quando o pagamento cair.\`
+              : "Nenhuma peça marcada: o link cobra só o frete.",
+          ),
+        ),
       h("label", { style: S2.label }, "Caixa"),
       h(
         "div",
@@ -868,11 +926,7 @@ export default {
             diaMes(live.data),
           ),
         ),
-      h(
-        "p",
-        { style: S2.ajuda },
-        "O valor das peças você já cobrou; aqui só entra o frete. Este valor serve para o seguro e para a etiqueta.",
-      ),
+      h("p", { style: S2.ajuda }, "Este valor serve para o seguro e para a etiqueta; não é cobrado da cliente."),
       h(
         "button",
         { style: { ...S2.linkRose, marginTop: 14 }, onClick: () => setMais(!mais) },
@@ -1033,7 +1087,14 @@ Acompanhe aqui: \${link}\`
           ],
           ["Frete", servicoTxt],
           ["Prazo", f.servico && f.servico.prazoDias ? \`até \${f.servico.prazoDias} dias úteis\` : ""],
-          ["Valor", f.servico ? brlCentavos(f.servico.precoCentavos) : ""],
+          ["Valor do frete", f.servico ? brlCentavos(f.servico.precoCentavos) : ""],
+          [
+            "Peças",
+            Array.isArray(f.pecas) && f.pecas.length
+              ? \`\${f.pecas.map((x) => x.nome).join(", ")} · \${brlCentavos(f.pecasCentavos)}\`
+              : "",
+          ],
+          ["Total cobrado", f.pagamento && f.pagamento.valorCentavos ? brlCentavos(f.pagamento.valorCentavos) : ""],
           ["Pagamento", textoPagamento(f, agora)],
         ]),
         f.status === "aguardando_pagamento" &&
@@ -1267,7 +1328,10 @@ Acompanhe aqui: \${link}\`
             lista.forEach((f) => {
               const antes = anterior.current[f.id];
               if ((antes === "criado" || antes === "aguardando_pagamento") && f.status === "pago") {
-                flash(\`\${primeiroNome(f.clienteNome)} pagou o frete! Já dá para gerar a etiqueta.\`, "pago");
+                flash(
+                  \`\${primeiroNome(f.clienteNome)} pagou\${f.forma === "checkout" ? "" : " o frete"}! Já dá para gerar a etiqueta.\`,
+                  "pago",
+                );
                 if (navigator.vibrate) navigator.vibrate(200);
               }
             });

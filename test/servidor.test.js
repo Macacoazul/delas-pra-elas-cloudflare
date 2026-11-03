@@ -577,7 +577,7 @@ test('admin: ajustes, clientes da live, fretes listados e peças da cliente', as
 
   await equipe.pedir('POST', '/api/app/gravar', { corpo: { ops: [{ col: 'vendas', id: 'vp1', op: 'set', dados: { data: '2026-10-20', criadaEm: 1760918400000, clienteId: 'cp1', codigo: '', peca: 'Vestido', valor: 80, pago: true, fila: [], temFoto: false } }] } });
   const pecas = await pedir(dona, 'POST', '/api/admin/vendasDaCliente', { corpo: { clienteId: 'cp1' } });
-  assert.deepEqual(pecas.json.data, [{ data: '2026-10-20', valor: 80 }]);
+  assert.deepEqual(pecas.json.data, [{ id: 'vp1', data: '2026-10-20', valor: 80, peca: 'Vestido', pago: true }]);
   assert.equal((await dona.pedir('POST', '/api/admin/vendasDaCliente', { corpo: { clienteId: '../x' } })).status, 400);
 
   const c = await pedir(dona, 'POST', '/api/admin/criarFrete', { corpo: { clienteId: 'cp1', clienteNome: 'Paula Reis', whatsapp: '47999990001', caixaId: 'm', pesoKg: '1,2' } });

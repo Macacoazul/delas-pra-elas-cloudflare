@@ -35,8 +35,8 @@ wrangler.toml    opcional: só para publicar pelo terminal (npx wrangler deploy)
 npm install            uma vez
 npm run site           recompila as telas (app/ -> site/)
 npm run colar          gera os 12 arquivos de para-colar/
-npm test               230 testes (unidade e servidor); npm run test:d1 repete com o banco D1 simulado
-npm run test:workerd   14 testes de API + 6 de navegador, com os arquivos de para-colar/ no motor do Cloudflare (workerd) e D1 local
+npm test               249 testes (unidade e servidor); npm run test:d1 repete com o banco D1 simulado
+npm run test:workerd   14 testes de API + 6 de navegador (20), com os arquivos de para-colar/ no motor do Cloudflare (workerd) e D1 local
 npm run test:e2e       55 passos no navegador (Playwright)
 npm run lint           ESLint
 ```

@@ -198,13 +198,13 @@
   }
 
   function assinatura(v) {
-    return JSON.stringify([v.status, v.servico, v.pagamento && v.pagamento.status, !!v.pix, v.rastreio, v.etiquetaPronta]);
+    return JSON.stringify([v.status, v.servico, v.pagamento && v.pagamento.status, !!v.pix, !!v.checkout, v.rastreio, v.etiquetaPronta]);
   }
 
   function etapaDaView(v) {
     if (v.status === 'cancelado') return 'cancelado';
     if (v.status === 'criado') return 'cep';
-    if (v.status === 'aguardando_pagamento') return v.pix ? 'pix' : 'cep';
+    if (v.status === 'aguardando_pagamento') return v.checkout ? 'checkout' : v.pix ? 'pix' : 'cep';
     return 'acompanha';
   }
 
@@ -230,8 +230,26 @@
     var v = estado.view;
     return [
       h('h1', { class: 'marca' }, v ? v.loja : 'Delas pra Elas'),
-      h('p', { class: 'sub' }, 'Frete da sua compra'),
+      h('p', { class: 'sub' }, usaCheckout() ? 'Sua compra' : 'Frete da sua compra'),
     ];
+  }
+
+  function usaCheckout() { return !!(estado.view && estado.view.forma === 'checkout'); }
+
+  /** Peças que entram no mesmo pagamento (só nomes e valores) e, quando já há frete escolhido, o total. */
+  function resumoDoPedido(freteCentavos, rotuloFrete) {
+    var v = estado.view;
+    var pecas = (v && v.pecas) || [];
+    var linhas = pecas.map(function (p) {
+      return h('div', { class: 'linha' }, h('span', null, p.nome), h('span', null, brl(p.valorCentavos)));
+    });
+    if (pecas.length > 1) linhas.push(h('div', { class: 'linha' }, h('span', null, 'Peças'), h('strong', null, brl(v.pecasCentavos))));
+    if (freteCentavos !== undefined && freteCentavos !== null) {
+      linhas.push(h('div', { class: 'linha' }, h('span', null, rotuloFrete || 'Frete'), h('span', null, brl(freteCentavos))));
+      linhas.push(h('div', { class: 'linha total' }, h('span', null, 'Total'), h('strong', null, brl((v.pecasCentavos || 0) + freteCentavos))));
+    }
+    if (!linhas.length) return null;
+    return h('div', { class: 'cartao pedido' }, h('h2', null, 'Seu pedido'), linhas);
   }
 
   function chipPacote() {
@@ -259,6 +277,7 @@
     if (e === 'opcoes') return telaOpcoes();
     if (e === 'dados') return telaDados();
     if (e === 'pix') return telaPix();
+    if (e === 'checkout') return telaCheckout();
     return telaAcompanha();
   }
 
@@ -350,7 +369,10 @@
     raiz.appendChild(h('div', null,
       cabecalho(),
       h('p', { class: 'ola' }, v.nome ? 'Oi, ' + v.nome + '!' : 'Oi!'),
-      h('p', { class: 'texto' }, 'Sua compra já está separada. Falta escolher o envio e pagar o frete — leva um minutinho.'),
+      h('p', { class: 'texto' }, usaCheckout()
+        ? 'Sua compra já está separada. Falta escolher o envio e pagar — Pix, cartão de crédito ou débito. Leva um minutinho.'
+        : 'Sua compra já está separada. Falta escolher o envio e pagar o frete — leva um minutinho.'),
+      resumoDoPedido(),
       chipPacote(),
       avisoTopo,
       h('div', { class: 'cartao' }, form),
@@ -417,7 +439,9 @@
           onclick: function () { estado.etapa = 'cep'; desenhar(); },
         }, 'Trocar CEP'),
       ),
-      h('p', { class: 'pequeno' }, 'O valor do frete é pago por Pix, logo em seguida. As peças você já pagou.'),
+      h('p', { class: 'pequeno' }, usaCheckout()
+        ? 'Na próxima etapa você paga ' + ((estado.view.pecas || []).length ? 'as peças e o frete juntos' : 'o frete') + ', com Pix, cartão de crédito ou débito.'
+        : 'O valor do frete é pago por Pix, logo em seguida. As peças você já pagou.'),
       rodape(),
     ));
   }
@@ -430,7 +454,9 @@
     if (!opcao) { estado.etapa = 'opcoes'; return desenhar(); }
     var f = estado.campos;
     var erro = h('div', { class: 'erro', role: 'alert', hidden: true });
-    var botao = h('button', { class: 'botao', type: 'submit' }, 'Gerar Pix de ' + brl(opcao.precoCentavos));
+    var totalCentavos = (estado.view.pecasCentavos || 0) + opcao.precoCentavos;
+    var rotuloBotao = usaCheckout() ? 'Ir para o pagamento · ' + brl(totalCentavos) : 'Gerar Pix de ' + brl(opcao.precoCentavos);
+    var botao = h('button', { class: 'botao', type: 'submit' }, rotuloBotao);
     function mostrar(msg) { erro.textContent = msg; erro.hidden = !msg; }
 
     function entrada(id, rotulo, extras, mascara) {
@@ -448,8 +474,8 @@
 
     var nome = entrada('nome', 'Nome completo', { autocomplete: 'name', autocapitalize: 'words' });
     var tel = entrada('telefone', 'WhatsApp com DDD', { type: 'tel', inputmode: 'tel', autocomplete: 'tel-national', placeholder: '(47) 99999-9999', maxlength: '16' }, mascaraTel);
-    var email = entrada('email', 'E-mail (o Pix exige)', { type: 'email', inputmode: 'email', autocomplete: 'email', autocapitalize: 'none' });
-    var cpf = entrada('cpf', 'CPF (do Pix)', { inputmode: 'numeric', autocomplete: 'off', placeholder: '000.000.000-00', maxlength: '14' }, mascaraCpf);
+    var email = entrada('email', usaCheckout() ? 'E-mail (para o recibo do pagamento)' : 'E-mail (o Pix exige)', { type: 'email', inputmode: 'email', autocomplete: 'email', autocapitalize: 'none' });
+    var cpf = entrada('cpf', usaCheckout() ? 'CPF (para a etiqueta do envio)' : 'CPF (do Pix)', { inputmode: 'numeric', autocomplete: 'off', placeholder: '000.000.000-00', maxlength: '14' }, mascaraCpf);
     var numero = entrada('numero', 'Número', { autocomplete: 'off', maxlength: '20' });
     var compl = entrada('complemento', 'Complemento (opcional)', { autocomplete: 'address-line2', maxlength: '60' });
 
@@ -488,7 +514,7 @@
         var problema = verificar();
         if (problema) return mostrar(problema);
         botao.disabled = true;
-        botao.textContent = 'Gerando o Pix…';
+        botao.textContent = usaCheckout() ? 'Abrindo o pagamento…' : 'Gerando o Pix…';
         mostrar('');
         chamar('POST', '/pagar', {
           opcaoId: opcao.id,
@@ -506,7 +532,7 @@
           aplicarView(v, { forcar: true });
         }).catch(function (err) {
           botao.disabled = false;
-          botao.textContent = 'Gerar Pix de ' + brl(opcao.precoCentavos);
+          botao.textContent = rotuloBotao;
           if (err.codigo === 'cotacao_vencida' || err.codigo === 'sem_cotacao') {
             estado.avisoInicial = err.message;
             estado.etapa = 'cep';
@@ -521,7 +547,9 @@
       tel.rotulo, tel.el,
       email.rotulo, email.el,
       cpf.rotulo, cpf.el,
-      h('p', { class: 'pequeno' }, 'O CPF é exigido pelo Pix e usado só neste pagamento e na etiqueta do envio.'),
+      h('p', { class: 'pequeno' }, usaCheckout()
+        ? 'O CPF é usado só na etiqueta do envio. Os dados do cartão você digita na página segura do Mercado Pago — esta loja não vê nem guarda.'
+        : 'O CPF é exigido pelo Pix e usado só neste pagamento e na etiqueta do envio.'),
       resumoEndereco,
       rua ? [rua.rotulo, rua.el] : null,
       bairro ? [bairro.rotulo, bairro.el] : null,
@@ -542,11 +570,61 @@
           h('span', null, opcao.empresa + ' ' + opcao.nome),
           h('strong', null, brl(opcao.precoCentavos)),
         ),
+        usaCheckout() && estado.view.pecasCentavos ? h('div', { class: 'resumo' }, h('span', null, 'Peças + frete'), h('strong', null, brl(totalCentavos))) : null,
         h('button', { class: 'link', type: 'button', onclick: function () { estado.etapa = 'opcoes'; desenhar(); } }, 'Trocar a opção de frete'),
       ),
       h('div', { class: 'cartao' }, form),
       rodape(),
     ));
+  }
+
+  /* ---- passo 4 (checkout): pagar na página do Mercado Pago */
+
+  function enderecoDoPagamento(url) {
+    var seguro = linkSeguro(url);
+    try {
+      return seguro && /(^|\.)mercadopago\.(com|com\.br|com\.ar|com\.mx|com\.co|com\.pe|com\.uy|com\.ve|cl)$/.test(new URL(seguro).hostname) ? seguro : '';
+    } catch (e) { return ''; }
+  }
+
+  function telaCheckout() {
+    var v = estado.view;
+    var c = v.checkout;
+    var destino = enderecoDoPagamento(c.url);
+    var servico = v.servico ? v.servico.empresa + ' ' + v.servico.nome : 'Frete';
+    var parcelas = c.parcelasMax > 1
+      ? 'Cartão de crédito à vista ou em até ' + c.parcelasMax + 'x (confira na página os juros, se houver)'
+      : 'Cartão de crédito à vista';
+    var vence = h('p', { class: 'pequeno' }, '');
+    function atualizarContagem() {
+      var resta = c.expiraEm - agoraServidor();
+      vence.textContent = resta > 0 ? 'Este pagamento fica disponível por ' + tempoRestante(resta) + '.' : 'Confirmando o pagamento…';
+      if (resta <= 0) conferir(5000);
+    }
+    raiz.appendChild(h('div', null,
+      cabecalho(),
+      resumoDoPedido(v.servico ? v.servico.precoCentavos : 0, servico),
+      h('div', { class: 'cartao pix' },
+        h('h2', null, 'Escolha como pagar'),
+        h('div', { class: 'valor' }, brl(c.valorCentavos)),
+        h('ul', { class: 'formas' },
+          h('li', null, 'Pix — aprovação na hora'),
+          h('li', null, parcelas),
+          h('li', null, 'Cartão de débito'),
+        ),
+        destino
+          ? h('a', { class: 'botao', href: destino, rel: 'noopener' }, 'Pagar ' + brl(c.valorCentavos))
+          : h('p', { class: 'erro', role: 'alert' }, 'Não foi possível abrir o pagamento. Peça um novo link para a loja.'),
+        h('p', { class: 'pequeno' }, 'Você será levada para a página segura do Mercado Pago. Depois do pagamento, volte para este link: ele mostra o andamento do seu pedido.'),
+        vence,
+      ),
+      h('div', { class: 'aviso', role: 'status' }, 'Assim que o pagamento for aprovado, esta página muda sozinha. Pode deixar aberta.'),
+      h('button', { class: 'link', type: 'button', onclick: function () { estado.etapa = 'cep'; desenhar(); } }, 'Trocar o CEP ou a opção de frete'),
+      rodape(),
+    ));
+    atualizarContagem();
+    relogios.contagem = setInterval(atualizarContagem, 1000);
+    agendarConferencia(5000);
   }
 
   /* ---- passo 4: Pix */
@@ -629,7 +707,7 @@
 
     var servico = v.servico ? v.servico.empresa + ' ' + v.servico.nome : '';
     var passos = [
-      { t: 'Frete pago', d: v.pagamento && v.pagamento.valorCentavos ? brl(v.pagamento.valorCentavos) + (v.pagamento.pagoEm ? ' · ' + dataHora(v.pagamento.pagoEm) : '') : '' },
+      { t: usaCheckout() ? 'Pagamento confirmado' : 'Frete pago', d: v.pagamento && v.pagamento.valorCentavos ? brl(v.pagamento.valorCentavos) + (v.pagamento.pagoEm ? ' · ' + dataHora(v.pagamento.pagoEm) : '') : '' },
       { t: nivel >= 2 ? 'Pedido preparado' : 'Preparando o seu pedido', d: nivel >= 2 ? 'Etiqueta pronta' + (servico ? ' · ' + servico : '') : 'A loja está separando e embalando' },
       { t: nivel >= 3 ? 'Postado' : 'Postagem', d: r && r.postadoEm ? dataHora(r.postadoEm) : (nivel >= 3 ? 'A transportadora já está com o seu pacote' : 'Aparece aqui quando o pacote for entregue à transportadora') },
       { t: nivel >= 4 ? 'Entregue' : 'Entrega', d: r && r.entregueEm ? dataHora(r.entregueEm) : (v.servico && v.servico.prazoDias && nivel < 4 ? prazoTexto(v.servico.prazoDias) + ', contando da postagem' : '') },
@@ -644,9 +722,9 @@
       );
     }));
 
-    var titulo = { pago: 'Frete pago, obrigada!', etiqueta: 'Seu pedido está quase saindo', postado: 'Seu pedido está a caminho', entregue: 'Pedido entregue!' }[s] || 'Frete pago, obrigada!';
+    var titulo = { pago: usaCheckout() ? 'Pagamento confirmado, obrigada!' : 'Frete pago, obrigada!', etiqueta: 'Seu pedido está quase saindo', postado: 'Seu pedido está a caminho', entregue: 'Pedido entregue!' }[s] || 'Pagamento confirmado, obrigada!';
     var frase = {
-      pago: 'Recebemos o pagamento do frete. A loja vai preparar o seu pedido e postar. O código de rastreio aparece aqui, nesta mesma página.',
+      pago: 'Recebemos o seu pagamento. A loja vai preparar o seu pedido e postar. O código de rastreio aparece aqui, nesta mesma página.',
       etiqueta: 'A etiqueta já foi feita. Assim que a transportadora receber o pacote, o rastreio começa a andar.',
       postado: 'A transportadora já está com o seu pacote. Acompanhe pelo código abaixo.',
       entregue: 'Que bom que chegou! Obrigada por comprar na Delas pra Elas.',
@@ -722,7 +800,7 @@
   }
 
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && estado.view && (estado.etapa === 'pix' || estado.etapa === 'acompanha')) conferir(estado.etapa === 'pix' ? 5000 : 15000);
+    if (!document.hidden && estado.view && (estado.etapa === 'pix' || estado.etapa === 'checkout' || estado.etapa === 'acompanha')) conferir(estado.etapa === 'acompanha' ? 15000 : 5000);
   });
 
   /* --------------------------------------------------------------- início */

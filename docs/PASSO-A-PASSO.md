@@ -89,3 +89,14 @@ O `database_id` do `wrangler.toml` é o do banco `delas-pra-elas` da conta. Se c
 ## Plano B: pelo terminal
 
 Com Node instalado: `npm install`, `npx wrangler login`, `npx wrangler d1 create delas-pra-elas` (copie o `database_id` para o `wrangler.toml`), `npx wrangler secret put SEGREDO`, `npx wrangler secret put ADMIN_SENHA`, `npx wrangler deploy`.
+
+## Versão 2 — peças + frete numa cobrança só (Pix, crédito, débito)
+
+Esta versão fica na branch **`v2-pagamento-completo`**; a `main` continua com o frete só por Pix.
+
+**Para testar sem mexer no site de verdade:** Cloudflare → o Worker → **Settings → Builds → Branch control** → em *Non-production branch builds* deixe ligado. Cada envio para a branch gera um endereço de prévia (`...workers.dev`) com o mesmo banco e os mesmos segredos. Quando estiver satisfeita, faça o **merge** da branch na `main` (GitHub → *Pull requests*) e o Cloudflare publica no endereço oficial.
+
+**Depois de publicar a versão 2:**
+1. **Fretes → Ajustes → Como a cliente paga**: deixe *Pix, crédito e débito*; defina *Parcelas no cartão (até)* e *Parcelar só a partir de* (R$ 120, como no seu aviso). Preencha o **Endereço do seu site** (https) — sem ele o Mercado Pago não avisa o pagamento nem leva a cliente de volta ao link.
+2. **No Mercado Pago** (conta que recebe): ative o *parcelamento sem juros* nas vezes que quiser assumir (as outras parcelas têm o acréscimo da operadora, mostrado à cliente). O webhook de *Pagamentos* é o mesmo de antes.
+3. **Primeiro teste real, de valor baixo:** lance uma peça de R$ 1 para uma cliente de teste, **Novo frete** → deixe a peça marcada → envie o link para você mesma → pague com Pix ou cartão. Confira: o frete vira *Pago*, a peça vira *paga* no app e o Mercado Pago mostra a cobrança. Depois devolva o valor pelo painel do Mercado Pago.

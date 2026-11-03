@@ -19,8 +19,8 @@ function situacao(f, agora) {
       return f.cep ? { txt: 'Cliente escolhendo o frete', cor: 'amber' } : { txt: 'Aguardando a cliente abrir o link', cor: 'amber' };
     case 'aguardando_pagamento':
       return p && p.status === 'pending' && p.expiraEm && p.expiraEm < agora
-        ? { txt: 'Pix venceu sem pagamento', cor: 'amber' }
-        : { txt: 'Aguardando o Pix', cor: 'amber' };
+        ? { txt: p.tipo === 'checkout' ? 'Link de pagamento venceu' : 'Pix venceu sem pagamento', cor: 'amber' }
+        : { txt: p && p.tipo === 'checkout' ? 'Aguardando o pagamento' : 'Aguardando o Pix', cor: 'amber' };
     case 'pago':
       return { txt: 'Pago · gerar etiqueta', cor: 'green' };
     case 'etiqueta':
@@ -49,10 +49,11 @@ function textoPagamento(f, agora) {
   if (!p) return f.status === 'cancelado' ? '—' : 'A cliente ainda não escolheu o frete';
   if (p.status === 'approved') return `Pago em ${dataHora(p.pagoEm)}`;
   if (p.status === 'pending') {
-    return p.expiraEm > agora ? `Aguardando o Pix (vale até ${dataHora(p.expiraEm)})` : 'Pix venceu sem pagamento';
+    const nome = p.tipo === 'checkout' ? 'o pagamento' : 'o Pix';
+    return p.expiraEm > agora ? `Aguardando ${nome} (vale até ${dataHora(p.expiraEm)})` : p.tipo === 'checkout' ? 'Link de pagamento venceu' : 'Pix venceu sem pagamento';
   }
   if (p.status === 'refunded') return 'Pagamento estornado';
-  return { expired: 'Pix venceu', cancelled: 'Pix cancelado', rejected: 'Pix recusado' }[p.status] || String(p.status);
+  return { expired: 'Venceu', cancelled: 'Cancelado', rejected: 'Recusado' }[p.status] || String(p.status);
 }
 
 /* ── lista ──────────────────────────────────────────────── */
@@ -93,6 +94,8 @@ function SheetNovo({ clientes, config, onClose, onFlash, aoMudar }) {
   const [obs, setObs] = useState('');
   const [mais, setMais] = useState(false);
   const [live, setLive] = useState(null);
+  const [vendas, setVendas] = useState([]);
+  const [marcadas, setMarcadas] = useState([]);
   const [erro, setErro] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [criado, setCriado] = useState(null);
@@ -106,14 +109,20 @@ function SheetNovo({ clientes, config, onClose, onFlash, aoMudar }) {
   /* Total das peças da cliente na última live: ajuda a preencher o valor declarado (o seguro do envio). */
   useEffect(() => {
     setLive(null);
+    setVendas([]);
+    setMarcadas([]);
     if (!cliente || !cliente.id) return undefined;
     let vivo = true;
     chamar('vendasDaCliente', { clienteId: cliente.id })
-      .then((vendas) => {
-        if (!vivo || !Array.isArray(vendas) || !vendas.length) return;
-        const ultima = vendas.reduce((m, v) => (v.data > m ? v.data : m), '');
-        const total = vendas.filter((v) => v.data === ultima).reduce((x, v) => x + (Number(v.valor) || 0), 0);
+      .then((lista) => {
+        if (!vivo || !Array.isArray(lista) || !lista.length) return;
+        const ultima = lista.reduce((m, v) => (v.data > m ? v.data : m), '');
+        const total = lista.filter((v) => v.data === ultima).reduce((x, v) => x + (Number(v.valor) || 0), 0);
         if (total > 0) setLive({ data: ultima, total });
+        // Peças ainda não pagas: já vêm marcadas as da live mais recente que tem peça em aberto.
+        const abertas = lista.filter((v) => !v.pago && v.valor > 0).sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0));
+        setVendas(abertas);
+        if (abertas.length) setMarcadas(abertas.filter((v) => v.data === abertas[0].data).map((v) => v.id));
       })
       .catch(() => {});
     return () => {
@@ -127,6 +136,9 @@ function SheetNovo({ clientes, config, onClose, onFlash, aoMudar }) {
     setWpp(c.whatsapp || '');
     setErro('');
   };
+
+  const alternar = (id) => setMarcadas((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+  const totalPecas = vendas.filter((v) => marcadas.includes(v.id)).reduce((x, v) => x + v.valor, 0);
 
   const criar = async () => {
     const pesoNum = lerNumero(peso);
@@ -147,9 +159,10 @@ function SheetNovo({ clientes, config, onClose, onFlash, aoMudar }) {
         valorDeclarado: declNum,
         conteudo: conteudo.trim(),
         observacao: obs.trim(),
+        vendaIds: marcadas,
       });
       aoMudar();
-      setCriado({ ...r, nome: nome.trim(), whatsapp: wpp });
+      setCriado({ ...r, nome: nome.trim(), whatsapp: wpp, comPecas: marcadas.length > 0 });
     } catch (e) {
       setErro(e.message);
     }
@@ -162,8 +175,8 @@ function SheetNovo({ clientes, config, onClose, onFlash, aoMudar }) {
     return (
       <Folha titulo="Link pronto" onClose={onClose}>
         <p style={{ ...S.subtitulo, lineHeight: 1.5 }}>
-          Envie para <strong>{primeiroNome(criado.nome)}</strong>. Ela digita o CEP, escolhe o frete e paga o Pix.
-          Você é avisada aqui quando cair.
+          Envie para <strong>{primeiroNome(criado.nome)}</strong>. Ela digita o CEP, escolhe o frete e paga{' '}
+          {criado.comPecas ? 'as peças e o frete de uma vez' : 'o frete'}, com Pix, cartão de crédito ou débito. Você é avisada aqui quando cair.
         </p>
         <LinhaCopiavel texto={link} onCopiado={(ok) => onFlash(ok ? 'Link copiado' : 'Não consegui copiar')} />
         <a style={{ ...S.ctaVerde, marginTop: 14 }} href={waLink(criado.whatsapp, mensagem)} target="_blank" rel="noopener noreferrer">
@@ -217,6 +230,27 @@ function SheetNovo({ clientes, config, onClose, onFlash, aoMudar }) {
       <label style={S.label}>WhatsApp da cliente</label>
       <input style={S.input} type="tel" inputMode="tel" placeholder="(47) 99999-9999" value={wpp} onChange={(e) => setWpp(e.target.value)} />
 
+      {cliente && vendas.length > 0 && (
+        <>
+          <label style={S.label}>Peças neste link (cobradas junto com o frete)</label>
+          <div style={S.sugBox}>
+            {vendas.map((v) => (
+              <button key={v.id} style={S.sugItem} onClick={() => alternar(v.id)} role="checkbox" aria-checked={marcadas.includes(v.id)}>
+                <span>
+                  {marcadas.includes(v.id) ? '☑' : '☐'} {v.peca || 'Peça'} <span style={{ fontSize: 12, color: t.inkFaint }}>· live de {diaMes(v.data)}</span>
+                </span>
+                <span style={{ fontSize: 14 }}>{brl(v.valor)}</span>
+              </button>
+            ))}
+          </div>
+          <p style={S.ajuda}>
+            {marcadas.length
+              ? `${marcadas.length} peça(s) · ${brl(totalPecas)}. A cliente paga isso + o frete de uma vez, e as peças são marcadas como pagas sozinhas quando o pagamento cair.`
+              : 'Nenhuma peça marcada: o link cobra só o frete.'}
+          </p>
+        </>
+      )}
+
       <label style={S.label}>Caixa</label>
       <div style={S.segmento} role="group" aria-label="Caixa">
         {config.caixas.map((c) => (
@@ -249,7 +283,7 @@ function SheetNovo({ clientes, config, onClose, onFlash, aoMudar }) {
           </button>
         </div>
       )}
-      <p style={S.ajuda}>O valor das peças você já cobrou; aqui só entra o frete. Este valor serve para o seguro e para a etiqueta.</p>
+      <p style={S.ajuda}>Este valor serve para o seguro e para a etiqueta; não é cobrado da cliente.</p>
 
       <button style={{ ...S.linkRose, marginTop: 14 }} onClick={() => setMais(!mais)}>
         {mais ? 'Ocultar' : 'Mais opções'}
@@ -392,7 +426,9 @@ function SheetDetalhe({ f, config, onClose, onFlash, aoMudar }) {
         ['Destino', f.cidade ? `${f.cidade}/${f.uf}${f.cep ? ` · CEP ${String(f.cep).replace(/^(\d{5})(\d{3})$/, '$1-$2')}` : ''}` : ''],
         ['Frete', servicoTxt],
         ['Prazo', f.servico && f.servico.prazoDias ? `até ${f.servico.prazoDias} dias úteis` : ''],
-        ['Valor', f.servico ? brlCentavos(f.servico.precoCentavos) : ''],
+        ['Valor do frete', f.servico ? brlCentavos(f.servico.precoCentavos) : ''],
+        ['Peças', Array.isArray(f.pecas) && f.pecas.length ? `${f.pecas.map((x) => x.nome).join(', ')} · ${brlCentavos(f.pecasCentavos)}` : ''],
+        ['Total cobrado', f.pagamento && f.pagamento.valorCentavos ? brlCentavos(f.pagamento.valorCentavos) : ''],
         ['Pagamento', textoPagamento(f, agora)],
       ])}
       {f.status === 'aguardando_pagamento' && (
@@ -600,7 +636,7 @@ function Fretes({ aoPerderLogin }) {
           lista.forEach((f) => {
             const antes = anterior.current[f.id];
             if ((antes === 'criado' || antes === 'aguardando_pagamento') && f.status === 'pago') {
-              flash(`${primeiroNome(f.clienteNome)} pagou o frete! Já dá para gerar a etiqueta.`, 'pago');
+              flash(`${primeiroNome(f.clienteNome)} pagou${f.forma === 'checkout' ? '' : ' o frete'}! Já dá para gerar a etiqueta.`, 'pago');
               if (navigator.vibrate) navigator.vibrate(200);
             }
           });

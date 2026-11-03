@@ -9,7 +9,7 @@ O que fazer **nos painéis dos serviços** e onde colar cada dado na tela **Fret
 | Serviço | Para quê | Credencial | Onde colar |
 |---|---|---|---|
 | **Melhor Envio** | Calcular o frete (Correios, Jadlog…), criar/pagar/gerar a etiqueta e acompanhar o rastreio | Token de acesso | Fretes → Conexões → Melhor Envio |
-| **Mercado Pago** | Cobrar o frete por Pix e **avisar quando for pago** | Access Token de produção + assinatura secreta do webhook | Fretes → Conexões → Mercado Pago |
+| **Mercado Pago** | Cobrar **peças + frete** (Pix, crédito, débito) numa página do Mercado Pago, ou só o frete por Pix, e **avisar quando for pago** | Access Token de produção + assinatura secreta do webhook | Fretes → Conexões → Mercado Pago |
 | **ViaCEP** | Preencher rua, bairro e cidade a partir do CEP da cliente | nenhuma | — |
 
 Os tokens ficam guardados **só no servidor** (banco D1, **criptografados** com AES-GCM por uma chave derivada do `SEGREDO`; nenhum navegador consegue ler). Depois de salvar, a tela nunca os recebe de volta: mostra apenas "salvo", os 4 últimos caracteres, a validade e as permissões que faltam.
@@ -25,7 +25,22 @@ Os tokens ficam guardados **só no servidor** (banco D1, **criptografados** com 
 
 Segurança do caminho: o preço sai do servidor; só Pix criados por ele são aceitos; valor e referência são conferidos; toques repetidos não geram dois Pix nem duas etiquetas; links da cliente são códigos aleatórios de 32 caracteres; a resposta pública nunca traz CPF, endereço completo, token ou dados internos.
 
-## 2. Mercado Pago — Pix e aviso de pagamento
+## 2. Mercado Pago — pagamento e aviso
+
+### 2.0 Como a cliente paga (versão 2: checkout)
+
+Na versão 2 o padrão é a **página de pagamento do Mercado Pago** (Checkout Pro). O servidor cria uma *preferência* (`POST /checkout/preferences`) com dois itens — as peças marcadas no link (valores lidos do banco, nunca da tela) e o frete escolhido —, a referência `DPE-<id do frete>`, o endereço do aviso (`notification_url`), o endereço de volta (`back_urls`, o próprio link da cliente) e a validade. Ficam **excluídos boleto e lotérica**; Pix, cartão de crédito e cartão de débito ficam disponíveis. O número máximo de parcelas vai em `payment_methods.installments` (Ajustes; vale só se o total chegar ao mínimo, padrão R$ 120). A cliente é levada ao `init_point` devolvido (o servidor só aceita endereço `https` do domínio do Mercado Pago).
+
+- **Parcelas sem juros**: a preferência não consegue *forçar* “sem juros”. Isso é configurado na sua conta do Mercado Pago (parcelamento sem juros, quantas vezes você quiser assumir). O que você não assumir, o Mercado Pago cobra da cliente e mostra antes de ela pagar. **Taxa:** o Mercado Pago desconta da loja a tarifa de cada forma de pagamento (cartão, Pix, parcelamento); confira a tabela da sua conta.
+- **Confirmação**: o webhook (evento *Pagamentos*) traz o número do pagamento; o servidor o consulta (`GET /v1/payments/{id}`), confere a referência e o **valor total** (peças + frete, em `transaction_amount`, sem juros de parcelamento) e só então marca como pago. Se o aviso atrasar, a página da cliente e a rotina de 30 minutos buscam os pagamentos da referência (`GET /v1/payments/search?external_reference=…`).
+- Pagamento recusado não encerra o link: a cliente pode tentar outro cartão. Pagamento aprovado de valor diferente, em duplicidade ou de um link cancelado vira **alerta** e não marca nada.
+- Depois de aprovado, as peças do link passam a **pagas** no app da live. A etiqueta continua sendo comprada só com o preço do frete.
+- O CPF da cliente **não** vai ao Mercado Pago pela loja (ela o digita na página do Mercado Pago, se pedido); é usado só na etiqueta.
+- **Não testado em conta real**: a criação da preferência, a página hospedada, parcelas e débito só foram exercitadas contra simulador. Faça o primeiro teste com um link de valor baixo (peça de R$ 1 + frete) pagando você mesma.
+
+### 2.1 Só Pix (modo antigo, só frete)
+
+Em Ajustes → *Como a cliente paga* → *Só Pix* o link cobra apenas o frete, com QR Code dentro da página (descrição abaixo). Links criados **com peças** sempre usam a página do Mercado Pago.
 
 ### 2.1 Pré-requisitos
 
@@ -125,9 +140,9 @@ Os registros do servidor (Cloudflare → seu Worker → Logs) mascaram tokens, C
 
 **Testado (automático, tudo na máquina de desenvolvimento):**
 
-- **230 testes de unidade e de servidor**, rodados duas vezes (banco em memória e banco D1 simulado sobre SQLite), com simuladores do ViaCEP, do Melhor Envio e do Mercado Pago que seguem a documentação: cotação, escolha de opção, Pix (valor, expiração, idempotência), webhook assinado (certo, errado, ausente, repetido, simultâneo), Pix de valor diferente ou duplicado, Pix vencido, etiqueta em etapas com retomada, diferença de preço, saldo insuficiente, etiqueta cancelada, rastreio, limites de tentativas, login (senha, sessão, bloqueio, papéis), tamanho dos pedidos, cabeçalhos de segurança e que nenhuma resposta pública ou registro vaza token, CPF ou segredo.
+- **249 testes de unidade e de servidor** (19 deles do checkout: peças, total, parcelas, aprovação, recusa, valor divergente, duplicidade, link cancelado, aviso atrasado), rodados duas vezes (banco em memória e banco D1 simulado sobre SQLite), com simuladores do ViaCEP, do Melhor Envio e do Mercado Pago que seguem a documentação: cotação, escolha de opção, Pix (valor, expiração, idempotência), webhook assinado (certo, errado, ausente, repetido, simultâneo), Pix de valor diferente ou duplicado, Pix vencido, etiqueta em etapas com retomada, diferença de preço, saldo insuficiente, etiqueta cancelada, rastreio, limites de tentativas, login (senha, sessão, bloqueio, papéis), tamanho dos pedidos, cabeçalhos de segurança e que nenhuma resposta pública ou registro vaza token, CPF ou segredo.
 - **14 testes de API no motor do Cloudflare (workerd)** com D1 local, usando os próprios arquivos de `para-colar/` copiados para uma pasta vazia, e **6 testes de navegador** (Chromium) contra esse mesmo Worker.
-- **55 passos de navegador (Chromium)** nas telas do app, dos Fretes e da cliente: criar link → cliente digita CEP, escolhe e recebe o Pix → webhook assinado → aviso na tela da dona → etiqueta → postado → entregue; cancelar; Pix vencido; link inválido; sem login; Ajustes e Conexões; política de segurança da página (CSP) sem violações.
+- **20 testes no motor do Cloudflare (workerd), 6 deles de navegador, inclusive o caminho do pagamento no checkout**, e **55 passos de navegador (Chromium)** nas telas do app, dos Fretes e da cliente: criar link → cliente digita CEP, escolhe e recebe o Pix → webhook assinado → aviso na tela da dona → etiqueta → postado → entregue; cancelar; Pix vencido; link inválido; sem login; Ajustes e Conexões; política de segurança da página (CSP) sem violações.
 - **63 alterações de propósito** no código de segurança (login, sessão, CSRF, webhook, criptografia, limites, permissões de cada rota…) e os testes denunciaram todas.
 
 **NÃO testado, e por quê:**

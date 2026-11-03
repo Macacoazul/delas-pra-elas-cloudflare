@@ -65,7 +65,7 @@ export const CAIXAS_PADRAO = [
   { id: 'g', nome: 'Grande', altura: 15, largura: 30, comprimento: 40 },
 ];
 export const MENSAGEM_LINK_PADRAO =
-  'Oi {nome}! Para receber suas peças, é só abrir o link, digitar o seu CEP e escolher o frete: {link}';
+  'Oi {nome}! Seu pedido está separado. Abra o link, digite o seu CEP, escolha o frete e pague tudo de uma vez (Pix, cartão de crédito ou débito): {link}';
 
 export const REMETENTE_VAZIO = {
   nome: '', telefone: '', email: '', cep: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '',
@@ -77,6 +77,9 @@ export const CONFIG_FRETE_PADRAO = {
   transportadoras: ['Correios', 'Jadlog'],
   mostrarOutras: false,
   pixValidadeMin: 1440,
+  formaPagamento: 'checkout',
+  parcelasMax: 3,
+  parcelasAPartirDe: 120,
   siteUrl: '',
   etiquetaPublica: true,
   naoComercial: true,
